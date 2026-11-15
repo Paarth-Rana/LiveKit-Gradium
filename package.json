@@ -1,0 +1,1 @@
+{"name":"silentos","private":true,"type":"module","scripts":{"start":"node --env-file=.env server.mjs","build":"esbuild public/client.js --bundle --format=esm --outfile=public/app.js"},"dependencies":{"@livekit/rtc-node":"^1.2.0","esbuild":"^0.25.0","livekit-client":"^2.0.0","livekit-server-sdk":"^2.0.0"}}
