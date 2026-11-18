@@ -159,3 +159,75 @@ speakForm.addEventListener('submit', async event => {
     submit.disabled = false;
   }
 });
+
+const mouth = byId('mouth');
+mouth.onclick = () => {
+  const call = current;
+  if (!call) return;
+  if (call.recording?.state === 'recording') {
+    call.recording.stop();
+    return;
+  }
+
+  const camera = call.room.localParticipant.getTrackPublication('camera')?.track;
+  if (!camera || !call.room.localParticipant.isCameraEnabled) {
+    status('Turn on your camera before recording.');
+    return;
+  }
+
+  try {
+    const recorder = new MediaRecorder(new MediaStream([camera.mediaStreamTrack]));
+    const chunks = [];
+    recorder.ondataavailable = event => chunks.push(event.data);
+    const reset = () => {
+      clearTimeout(timer);
+      call.room.off(RoomEvent.Disconnected, stop);
+      call.recording = undefined;
+      mouth.disabled = false;
+      mouth.textContent = 'Record silent clip';
+    };
+    const stop = () => {
+      if (recorder.state === 'recording') recorder.stop();
+    };
+    let failed = false;
+    recorder.onerror = () => {
+      failed = true;
+      reset();
+      if (current === call) status('Camera recording failed. Try again.');
+    };
+    recorder.onstop = async () => {
+      clearTimeout(timer);
+      if (current !== call || failed) {
+        reset();
+        return;
+      }
+      mouth.disabled = true;
+      mouth.textContent = 'Transcribing…';
+      status('Sending the silent clip to FLARE…');
+      try {
+        const response = await fetch('/transcribe', {
+          method: 'POST',
+          headers: { 'x-call-session': call.session },
+          body: new Blob(chunks, { type: recorder.mimeType }),
+        });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error);
+        if (current !== call) return;
+        speakForm.elements.text.value = result.text;
+        status('Review the transcript, then click Speak.');
+      } catch (error) {
+        if (current === call) status(error.message);
+      } finally {
+        reset();
+      }
+    };
+    recorder.start();
+    call.recording = recorder;
+    const timer = setTimeout(stop, 8000);
+    call.room.once(RoomEvent.Disconnected, stop);
+    mouth.textContent = 'Stop and transcribe';
+    status('Mouth a short phrase. Recording stops after 8 seconds.');
+  } catch {
+    status('Could not start recording. Try another browser or turn the camera back on.');
+  }
+};

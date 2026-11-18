@@ -1,3 +1,4 @@
+import { transcribeVideo } from './flare.mjs';
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -131,6 +132,31 @@ createServer(async (req, res) => {
       const data = await readFile(new URL(`./public/${file}`, import.meta.url));
       res.writeHead(200, { 'content-type': type });
       return res.end(data);
+    }
+    if (req.method === 'POST' && path === '/transcribe') {
+      if (!allowedOrigins.has(req.headers.origin)) return json(res, 403, { error: 'Use the local call page.' });
+      const session = sessions.get(req.headers['x-call-session']);
+      if (!session || session.expires <= Date.now()) return json(res, 401, { error: 'Rejoin the room to continue.' });
+      if (!env.FLARE_API_URL) return json(res, 503, { error: 'Set FLARE_API_URL to the current hosted FLARE address and restart SilentOS.' });
+      const type = req.headers['content-type'] ?? '';
+      if (!/^video\/(webm|mp4)(;|$)/.test(type)) return json(res, 415, { error: 'Use MP4 or WebM video.' });
+      const chunks = [];
+      let size = 0;
+      for await (const chunk of req.iterator({ destroyOnReturn: false })) {
+        size += chunk.length;
+        if (size > 16 * 1024 * 1024) {
+          req.resume();
+          return json(res, 413, { error: 'Video exceeds 16 MB. Try a shorter clip.' });
+        }
+        chunks.push(chunk);
+      }
+      if (!size) return json(res, 400, { error: 'No video was recorded.' });
+      try {
+        const result = await transcribeVideo(new Blob(chunks, { type }), env.FLARE_API_URL);
+        return json(res, 200, { text: result.text.trim() });
+      } catch {
+        return json(res, 502, { error: 'FLARE could not transcribe this clip. Check the hosted service address or try another clip.' });
+      }
     }
     if (req.method !== 'POST' || !['/join', '/speak', '/leave'].includes(path)) {
       return json(res, 404, { error: 'Not found.' });
